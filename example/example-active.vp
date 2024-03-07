@@ -1,0 +1,35 @@
+// An exchange between alice and bob
+// With a active attacker, this should fail
+// If the attacker can impersonate bob by MITM-ing Bob's public key, then the message is not authentic
+attacker[active]
+
+principal Alice[]
+principal Bob[]
+
+principal Alice[
+    knows private a
+    ga = G^a
+]
+
+// Brackets around the message implies "guarded constants": attackers can read but not modify
+// This is useful for modeling situations like mutual authentication
+// See what happens when you unguard Bob or Alice's public keys!
+Alice -> Bob: [ga]
+
+principal Bob[
+    knows private b
+    gb = G^b
+    knows private m
+    e = ENC(ga^b, m)
+]
+
+Bob -> Alice: e, [gb]
+
+principal Alice[
+    d = DEC(gb^a, e)
+]
+
+queries[
+    confidentiality? m
+    authentication? Bob -> Alice: e
+]

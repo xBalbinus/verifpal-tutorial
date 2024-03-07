@@ -1,0 +1,34 @@
+attacker[active]
+
+principal Alice[]
+principal Bob[]
+
+principal Alice[
+    knows private a
+    ga = G^a
+]
+
+Alice -> Bob: [ga]
+
+// The encryption primitive used by Bob in the previous active and passive examples was pure, unauthenticated encryption
+// so it has no way for Alice to receive integrity guarantees for the message being sent.
+// You can specify in your model authenticated ciphers
+principal Bob[
+    knows private b
+    gb = G^b
+    knows private m
+    e = AEAD_ENC(ga^b, m, nil)
+]
+
+Bob -> Alice: e, [gb]
+
+// The question mark signifies a "checked primitive"
+// These stops the execution of the model if the authenticated decryption fails.
+principal Alice[
+    d = AEAD_DEC(gb^a, e, nil)?
+]
+
+queries[
+    confidentiality? m
+    authentication? Bob -> Alice: e
+]

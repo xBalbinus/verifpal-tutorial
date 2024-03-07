@@ -1,0 +1,46 @@
+// An exchange between alice and bob
+
+// The first thing you'll want to do is declare attackers.
+// There are two types of attackers - active and passive
+// Passive: Someone who has read but not write access to network communications
+// Active: Someone who has drop / modify / redirect etc. access to network communications
+
+attacker[passive]
+
+principal Alice[]
+principal Bob[]
+
+principal Alice[
+    knows private a
+    // Calculate diffie-hellman public key
+    ga = G^a
+]
+
+// Alice sends her public key to Bob
+// This is the syntax for a message
+Alice -> Bob: ga
+
+principal Bob[
+    knows private b
+    // Calculate diffie-hellman public key
+    gb = G^b
+    knows private m
+    // Encrypt the message with the shared secret
+    e = ENC(ga^b, m)
+]
+
+Bob -> Alice: e, gb
+
+principal Alice[
+    // Decrypt the message with the shared secret
+    d = DEC(gb^a, e)
+]
+
+// Sees whether or not this model satisfies the following properties:
+// With a passive attacker, this should pass because the passive attacker cannot perform a man in the middle attack.
+queries[
+    // Check if the message is confidential
+    confidentiality? m
+    // Check if the message is authentic (If Alice receives e from Bob, then only Bob could've sent it to Alice)
+    authentication? Bob -> Alice: e
+]
