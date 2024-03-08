@@ -1,62 +1,93 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-// Here, we model Alice and Bob in a signal session
+// Here, we model Alice and Bob in a Signal session
 // Alice sends a message to Bob, Bob replies, and Alice sends a third message.
-
-// Each principal in Signal has two types of key pairs: 
-// long-term key pairs: serve to authenticate identity 
-// ephemeral key pairs: used for forward secrecy
 attacker[active]
 
+// Each principal in Signal has two types of key pairs: 
+// long-term key pairs: serve to authenticate identity and establishing sessions. This does not change.
+// ephemeral key pairs: used for forward secrecy (only lasts a few messages), used solely for encryption.
+
+// Properties:
+// Forward secrecy: Sessions are established using authenticated Diffie-Hellman key exchange; revealing long term keys does not reveal the contents of their messages.
+// Post-compromise security: If Alice and Bob's states were to be compromised, the number of past and future messages compromised relative to the last message sent at the time of compromise is limited.
+// Asynchronous session establishment: Alice is able to establish a Signal session with Bob and send a message even if Bob’s phone is turned off.
+
+// Initializing Alice
 principal Alice[
+    // Constants
     knows public c0, c1, c2, c3, c4
+    // Alice's longterm private key
     knows private alongterm
+    // Alice's longterm public key
     galongterm = G^alongterm
 ]
 
+// Initializing Bob
 principal Bob[
+    // Constants
     knows public c0, c1, c2, c3, c4
-    knows private blongterm, bs
+    // Bob's longterm private key
+    knows private blongterm
+    knows private bs
     generates bo
+    // Bob's longterm public key
     gblongterm = G^blongterm
+    // Bob's 'signed pre-key'
     gbs = G^bs
+    // Bob's one-time pre-key
     gbo = G^bo
     gbssig = SIGN(blongterm, gbs)
 ]
 
 Bob -> Alice: [gblongterm], gbssig, gbs, gbo
 
+// Alice establishes session with Bob
+// Four Diffie Hellman operations occur when Alice establishes a session with Bob:
+// - Between Alice’s long-term private key and Bob’s “signed pre-key” (an ephermeral public key Bob generated and signed with his long term priv-key) [gbssig]
+// - Between Alice’s ephemeral private key, generated for this session, and Bob’s long-term public key
+// - Between Alice's ephemeral private key and Bob's signed pre-key
+// - Between Alice’s ephemeral private key and Bob’s “one-time pre-key” (unsigned)
+// The 4 Diffie Hellman operations are hashed into the master secret.
 principal Alice[
+    // Alice's ephemeral session key
     generates ae1
     gae1 = G^ae1
     amaster = HASH(c0, gbs^alongterm, gblongterm^ae1, gbs^ae1, gbo^ae1)
     arkba1, ackba1 = HKDF(amaster, c1, c2)
 ]
 
+// Alice encrypts message 1 to Bob using the double ratchet mechanism
 principal Alice[
-    generates m1, ae2
-    gae2 = G^ae2
-    valid = SIGNVERIF(gblongterm, gbs, gbssig)?
-    akshared1 = gbs^ae2
-    arkab1, ackab1 = HKDF(akshared1, arkba1, c2)
-    akenc1, akenc2 = HKDF(MAC(ackab1, c3), c1, c4)
-    e1 = AEAD_ENC(akenc1, m1, HASH(galongterm, gblongterm, gae2))
+    generates m1, ae2 // Alice generates a new ephemeral key for this message
+    gae2 = G^ae2 // Computes the public part of the ephemeral key
+    valid = SIGNVERIF(gblongterm, gbs, gbssig)? // Verifies Bob's signed pre-key for authenticity
+    akshared1 = gbs^ae2 // First ratchet: Computes a shared secret using Alice's ephemeral key and Bob's signed pre-key (authenticate messages based on A & B's identities)
+    arkab1, ackab1 = HKDF(akshared1, arkba1, c2) // Derives new root and chain keys from the shared secret and previous root key
+    akenc1, akenc2 = HKDF(MAC(ackab1, c3), c1, c4) // Second ratchet: Derives message encryption keys from the chain key (keeps messages confidential via. perpetually fresh ephemeral shared secrets)
+    e1 = AEAD_ENC(akenc1, m1, HASH(galongterm, gblongterm, gae2)) // Encrypts the message using the derived encryption key and a nonce derived from public keys
 ]
 
+// Alice sends Bob the first message
 Alice -> Bob: [galongterm], gae1, gae2, e1
 
+// Bob derives shared master secret
 principal Bob[
     bmaster = HASH(c0, galongterm^bs, gae1^blongterm, gae1^bs, gae1^bo)
-    brkba1, bckba1 = HKDF(bmaster, c1, c2)
+    brkba1, bckba1 = HKDF(bmaster, c1, c2) // HKDF is used to derive new cryptographic keys from the shared secret. It takes the shared secret, a previous root key, and a constant as inputs.
 ]
 
+// Bob Decrypts Alice's first message
 principal Bob[
     bkshared1 = gae2^bs
-    brkab1, bckab1 = HKDF(bkshared1, brkba1, c2)
-    bkenc1, bkenc2 = HKDF(MAC(bckab1, c3), c1, c4)
-    m1_d = AEAD_DEC(bkenc1, e1, HASH(galongterm, gblongterm, gae2))
+    // HKDF is again used to derive message encryption keys from the chain key and constants, ensuring fresh keys for each message.
+    brkab1, bckab1 = HKDF(bkshared1, brkba1, c2) // Derives new root and chain keys from the shared secret and the previous root key using HKDF
+    bkenc1, bkenc2 = HKDF(MAC(bckab1, c3), c1, c4) // Derives message encryption keys from the chain key using HKDF
+    m1_d = AEAD_DEC(bkenc1, e1, HASH(galongterm, gblongterm, gae2)) // Decrypts Alice's message using the derived encryption key and a nonce derived from public keys
 ]
 
+// Bob encrypts message 2 to Alice.
+// Note: with each message, a new key pair is generated and mixed in with the chain of keys descending from the master secret.
 principal Bob[
     generates m2, be
     gbe = G^be
@@ -66,8 +97,10 @@ principal Bob[
     e2 = AEAD_ENC(bkenc3, m2, HASH(gblongterm, galongterm, gbe))
 ]
 
+// Bob sends Alice the second message
 Bob -> Alice: gbe, e2
 
+// Alice decrypts message 2
 principal Alice[
     akshared2 = gbe^ae2
     arkba2, ackba2 = HKDF(akshared2, arkab1, c2)
@@ -75,6 +108,7 @@ principal Alice[
     m2_d = AEAD_DEC(akenc3, e2, HASH(gblongterm, galongterm, gbe))
 ]
 
+// Alice encrypts message 3 to Bob
 principal Alice[
     generates m3, ae3
     gae3 = G^ae3
@@ -84,6 +118,7 @@ principal Alice[
     e3 = AEAD_ENC(akenc5, m3, HASH(gblongterm, galongterm, gae3))
 ]
 
+// Alice sends Bob the third message
 Alice -> Bob: gae3, e3
 
 principal Bob[
@@ -93,6 +128,10 @@ principal Bob[
     m3_d = AEAD_DEC(bkenc5, e3, HASH(gblongterm, galongterm, gae3))
 ]
 
+// Phases in Verifpal models are used to represent different stages or steps in a cryptographic protocol. 
+// They allow the model to simulate the progression of time or the sequence of actions.
+// In this case, we use phases to represent the fact that either Alice and Bob can, for example, have their phones stolen or lose their phones
+// Which compromises their long term private keys (not their ephemeral ones)
 phase[1]
 principal Alice[leaks alongterm]
 principal Bob[leaks blongterm]
